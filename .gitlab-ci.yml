@@ -1,0 +1,84 @@
+# Pipeline fuer die Angular-App (Angular 17, Karma/Jasmine)
+#
+# Diese Datei gehoert als .gitlab-ci.yml in das GitHub-Repo fradl/template,
+# NICHT in das gespiegelte GitLab-Projekt apps/template - dort wuerde sie
+# beim naechsten Sync ueberschrieben.
+#
+# Reihenfolge: erst Tests, dann Build. Faellt ein Test durch, wird gar nicht
+# gebaut - GitLab startet die naechste Stage nur bei gruener vorheriger.
+
+stages:
+  - test
+  - build
+  - deploy
+
+# Angular 17 unterstuetzt Node 18.13+ und 20.x. Node 22 ist nicht freigegeben.
+default:
+  image: node:20-bookworm-slim
+  tags:
+    - docker
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+    policy: pull
+
+test:
+  stage: test
+  image: node:20-bookworm
+  # laeuft zuerst und fuellt den npm-Cache fuer den Build
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+    policy: pull-push
+  variables:
+    # Karma laeuft im Container als root, deshalb braucht Chromium --no-sandbox.
+    # Das Projekt hat keine karma.conf.js, in der man einen eigenen Launcher
+    # definieren koennte - daher ein Wrapper-Skript, das die Flags mitgibt.
+    CHROME_BIN: /usr/local/bin/chromium-ci
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends chromium
+    - |
+      printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox --disable-gpu --disable-dev-shm-usage "$@"\n' > "$CHROME_BIN"
+    - chmod +x "$CHROME_BIN"
+    - npm ci --cache .npm --prefer-offline
+  script:
+    - npx ng test --watch=false --browsers=ChromeHeadless --progress=false
+
+build:
+  stage: build
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npx ng build --configuration production
+  artifacts:
+    paths:
+      - dist/template/browser/
+    expire_in: 1 week
+
+deploy:
+  stage: deploy
+  image: docker:27-cli
+  needs:
+    - build
+  variables:
+    GIT_STRATEGY: none
+    CONTAINER: template-web
+    PORT: "8080"
+  script:
+    # Der Job-Container und der Docker-Daemon sehen unterschiedliche Dateisysteme,
+    # ein Bind-Mount des Build-Outputs waere also nicht moeglich. Stattdessen
+    # wandert das Artefakt ueber den Build-Context in ein Image.
+    - printf 'FROM nginx:alpine\nCOPY dist/template/browser/ /usr/share/nginx/html/\n' > Dockerfile
+    - docker build -t "$CONTAINER:$CI_COMMIT_SHORT_SHA" -t "$CONTAINER:latest" .
+    - docker rm -f "$CONTAINER" 2>/dev/null || true
+    - docker run -d --name "$CONTAINER" --restart unless-stopped -p "$PORT:80" "$CONTAINER:latest"
+    - echo "Deployt auf http://localhost:$PORT"
+  environment:
+    name: local
+    url: http://localhost:8080
+  when: manual
