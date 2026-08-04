@@ -4,13 +4,18 @@
 # NICHT in das gespiegelte GitLab-Projekt apps/template - dort wuerde sie
 # beim naechsten Sync ueberschrieben.
 #
-# Reihenfolge: erst Tests, dann Build. Faellt ein Test durch, wird gar nicht
-# gebaut - GitLab startet die naechste Stage nur bei gruener vorheriger.
+# Ablauf:
+#   test  -> build -> dev (automatisch) -> prod (nur per Knopfdruck)
+#
+# Gebaut wird genau einmal. dev und prod liefern dasselbe Artefakt aus,
+# damit in Produktion nachweislich das Bundle laeuft, das in dev getestet
+# wurde. Ein zweiter Build koennte davon abweichen.
 
 stages:
   - test
   - build
-  - deploy
+  - dev
+  - prod
 
 # Angular 17 unterstuetzt Node 18.13+ und 20.x. Node 22 ist nicht freigegeben.
 default:
@@ -60,25 +65,48 @@ build:
       - dist/template/browser/
     expire_in: 1 week
 
-deploy:
-  stage: deploy
+# Gemeinsamer Ausliefer-Ablauf. CONTAINER und PORT setzen die Jobs.
+#
+# Der Job-Container und der Docker-Daemon sehen unterschiedliche Dateisysteme,
+# ein Bind-Mount des Build-Outputs waere also nicht moeglich. Stattdessen
+# wandert das Artefakt ueber den Build-Context in ein Image.
+.deploy:
   image: docker:27-cli
   needs:
     - build
   variables:
     GIT_STRATEGY: none
-    CONTAINER: template-web
-    PORT: "8080"
   script:
-    # Der Job-Container und der Docker-Daemon sehen unterschiedliche Dateisysteme,
-    # ein Bind-Mount des Build-Outputs waere also nicht moeglich. Stattdessen
-    # wandert das Artefakt ueber den Build-Context in ein Image.
     - printf 'FROM nginx:alpine\nCOPY dist/template/browser/ /usr/share/nginx/html/\n' > Dockerfile
     - docker build -t "$CONTAINER:$CI_COMMIT_SHORT_SHA" -t "$CONTAINER:latest" .
     - docker rm -f "$CONTAINER" 2>/dev/null || true
     - docker run -d --name "$CONTAINER" --restart unless-stopped -p "$PORT:80" "$CONTAINER:latest"
-    - echo "Deployt auf http://localhost:$PORT"
+    - echo "$CI_ENVIRONMENT_NAME laeuft auf http://localhost:$PORT (Commit $CI_COMMIT_SHORT_SHA)"
+
+deploy_dev:
+  extends: .deploy
+  stage: dev
+  variables:
+    CONTAINER: template-dev
+    PORT: "8080"
   environment:
-    name: local
+    name: dev
     url: http://localhost:8080
-  when: manual
+  rules:
+    # nur main - Feature-Branches sollen keine Umgebung ueberschreiben
+    - if: $CI_COMMIT_BRANCH == "main"
+
+deploy_prod:
+  extends: .deploy
+  stage: prod
+  variables:
+    CONTAINER: template-prod
+    PORT: "8081"
+  environment:
+    name: production
+    url: http://localhost:8081
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+      # bleibt die Pipeline sonst dauerhaft "blocked"
+      allow_failure: true
