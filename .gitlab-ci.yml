@@ -93,8 +93,14 @@ deploy_dev:
     name: dev
     url: http://localhost:8080
   rules:
-    # nur main - Feature-Branches sollen keine Umgebung ueberschreiben
+    # main liefert automatisch aus
     - if: $CI_COMMIT_BRANCH == "main"
+    # Feature-Branches auf Knopfdruck: main ist geschuetzt, ein Branch nicht -
+    # deshalb darf hier auch ein Developer den Job starten.
+    # Achtung: es gibt nur eine dev-Umgebung, der letzte Klick gewinnt.
+    - if: $CI_COMMIT_BRANCH != "main"
+      when: manual
+      allow_failure: true
 
 deploy_prod:
   extends: .deploy
