@@ -1,11 +1,12 @@
 # Pipeline fuer die Angular-App (Angular 17, Karma/Jasmine)
 #
-# Diese Datei gehoert als .gitlab-ci.yml in das GitHub-Repo fradl/template,
-# NICHT in das gespiegelte GitLab-Projekt apps/template - dort wuerde sie
-# beim naechsten Sync ueberschrieben.
+# Gepflegt wird diese Datei in GitLab (apps/template). GitHub ist seit der
+# Umstellung auf Push-Mirroring nur noch eine nachlaufende Kopie - dort
+# aendert man nichts, es wuerde beim naechsten Mirror-Lauf ueberschrieben.
 #
 # Ablauf:
-#   test  -> build -> dev (automatisch) -> prod (nur per Knopfdruck)
+#   main            -> test -> build -> dev automatisch -> prod per Knopfdruck
+#   Feature-Branch  -> test -> build -> dev per Knopfdruck (kein prod)
 #
 # Gebaut wird genau einmal. dev und prod liefern dasselbe Artefakt aus,
 # damit in Produktion nachweislich das Bundle laeuft, das in dev getestet
